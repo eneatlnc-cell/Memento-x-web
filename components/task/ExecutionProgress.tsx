@@ -37,7 +37,7 @@ const statusLabel = (status: string) => {
 };
 
 const stepNameMap: Record<string, string> = {
-  matting: "抠图",
+  scene_edit: "SVG场景编辑",
   track: "遮罩追踪",
   replace: "主体替换",
   composite: "合成",
