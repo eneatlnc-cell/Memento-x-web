@@ -1,88 +1,50 @@
-// WebSocket 连接 Hook
 "use client";
 
-import { useEffect, useRef, useCallback, useState } from "react";
+import { useEffect, useRef, useCallback } from "react";
 
-interface WebSocketMessage {
-  type: string;
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000/ws";
+
+type TaskUpdateCallback = (data: {
   task_id: string;
   status: string;
-  step_id: string;
-  step_name: string;
+  steps: Array<{ id: string; action: string; status: string }>;
   progress: number;
-  message: string;
-  timestamp: string;
-}
+  result_url?: string;
+}) => void;
 
-interface UseWebSocketOptions {
-  onMessage: (data: WebSocketMessage) => void;
-  onOpen?: () => void;
-  onClose?: () => void;
-  onError?: (error: Event) => void;
-  reconnectAttempts?: number;
-  reconnectInterval?: number;
-}
-
-export function useWebSocket({
-  onMessage,
-  onOpen,
-  onClose,
-  onError,
-  reconnectAttempts = 3,
-  reconnectInterval = 2000,
-}: UseWebSocketOptions) {
+export function useWebSocket(userId: string, onTaskUpdate: TaskUpdateCallback) {
   const wsRef = useRef<WebSocket | null>(null);
-  const [isConnected, setIsConnected] = useState(false);
-  const reconnectCountRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout>>();
+  const onUpdateRef = useRef(onTaskUpdate);
+
+  // 保持回调最新
+  onUpdateRef.current = onTaskUpdate;
 
   const connect = useCallback(() => {
-    const wsUrl = process.env.NEXT_PUBLIC_WS_BASE_URL || "ws://localhost:8000/ws";
-    const userId = "web_user";
-    const ws = new WebSocket(`${wsUrl}?user_id=${userId}`);
+    if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
-    ws.onopen = () => {
-      setIsConnected(true);
-      reconnectCountRef.current = 0;
-      onOpen?.();
-    };
+    const ws = new WebSocket(`${WS_URL}?token=${encodeURIComponent(userId)}`);
+    wsRef.current = ws;
 
+    ws.onopen = () => console.log("[WS] 已连接");
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        onMessage(data);
-      } catch {
-        // ignore parse errors
-      }
+        if (data.type === "task_update") onUpdateRef.current(data);
+      } catch { /* ignore */ }
     };
-
     ws.onclose = () => {
-      setIsConnected(false);
-      onClose?.();
-
-      // 自动重连
-      if (reconnectCountRef.current < reconnectAttempts) {
-        timerRef.current = setTimeout(() => {
-          reconnectCountRef.current += 1;
-          connect();
-        }, reconnectInterval);
-      }
+      console.log("[WS] 断开，3s 后重连...");
+      reconnectTimer.current = setTimeout(connect, 3000);
     };
-
-    ws.onerror = (error) => {
-      onError?.(error);
-    };
-
-    wsRef.current = ws;
-  }, [onMessage, onOpen, onClose, onError, reconnectAttempts, reconnectInterval]);
+    ws.onerror = () => ws.close();
+  }, [userId]);
 
   useEffect(() => {
     connect();
     return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
+      clearTimeout(reconnectTimer.current);
       wsRef.current?.close();
     };
   }, [connect]);
-
-  return { isConnected, reconnect: connect };
 }

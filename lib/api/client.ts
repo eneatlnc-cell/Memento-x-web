@@ -1,5 +1,6 @@
-// API 客户端 — 基于 fetch 封装
+// API 客户端 — 基于 fetch 封装，支持 JWT 认证
 import { ENDPOINTS } from "./endpoints";
+import { useAuthStore } from "@/lib/store/authStore";
 
 interface RequestOptions {
   method?: "GET" | "POST" | "PUT" | "DELETE";
@@ -8,13 +9,20 @@ interface RequestOptions {
 }
 
 class ApiClient {
+  private getToken(): string | null {
+    if (typeof window === "undefined") return null;
+    return useAuthStore.getState().token;
+  }
+
   private async request<T>(url: string, options: RequestOptions = {}): Promise<T> {
     const { method = "GET", body, headers = {} } = options;
+    const token = this.getToken();
 
     const config: RequestInit = {
       method,
       headers: {
         "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...headers,
       },
     };
@@ -25,6 +33,12 @@ class ApiClient {
 
     const response = await fetch(url, config);
 
+    if (response.status === 401) {
+      useAuthStore.getState().logout();
+      if (typeof window !== "undefined") window.location.href = "/login";
+      throw new Error("认证已过期，请重新登录");
+    }
+
     if (!response.ok) {
       const error = await response.text().catch(() => "Unknown error");
       throw new Error(`API Error ${response.status}: ${error}`);
@@ -33,25 +47,47 @@ class ApiClient {
     return response.json();
   }
 
-  // ── 意图理解 ──
-  async understandIntent(userInput: string, projectId?: string, assets?: Array<{ id: string; name: string; type: string }>) {
+  // ── 账号 ──
+  async register(email: string, password: string) {
+    return this.request<{ access_token: string; token_type: string }>(
+      ENDPOINTS.ACCOUNT_REGISTER,
+      { method: "POST", body: { email, password } },
+    );
+  }
+
+  async login(email: string, password: string) {
+    return this.request<{ access_token: string; token_type: string }>(
+      ENDPOINTS.ACCOUNT_LOGIN,
+      { method: "POST", body: { email, password } },
+    );
+  }
+
+  // ── 意图理解 + 派发 ──
+  async understandIntent(
+    userInput: string,
+    projectId?: string,
+    assets?: Array<{ id: string; name: string; type: string }>,
+  ) {
     return this.request<{
       success: boolean;
       workflow: { version: string; workflow_id: string; steps: Array<{ id: string; action: string; params: Record<string, unknown> }> };
       task_id: string;
     }>(ENDPOINTS.INTENT_UNDERSTAND, {
       method: "POST",
-      body: { user_input: userInput, project_id: projectId || "default", assets: assets || [] },
+      body: { input: userInput, project_id: projectId || "default", assets: assets || [] },
     });
   }
 
-  // ── 任务派发 ──
-  async dispatchWorkflow(workflow: unknown, localUrl?: string) {
+  async dispatchWorkflow(userInput: string, assets?: Array<{ id: string; name: string; type: string }>, localUrl?: string) {
     return this.request<{ success: boolean; task_id: string; local_status: string }>(
       ENDPOINTS.WORKFLOW_DISPATCH,
       {
         method: "POST",
-        body: { workflow, local_url: localUrl || "http://localhost:8000/api/v1/local/execute" },
+        body: {
+          user_input: userInput,
+          assets: assets || [],
+          local_url: localUrl || "http://localhost:8000/api/v1/local/execute",
+        },
       },
     );
   }
@@ -74,12 +110,22 @@ class ApiClient {
       asset_id: string;
       name: string;
       type: string;
-      url: string;
+      duration: number | null;
       thumbnail_url: string | null;
       status: string;
       is_result: boolean;
       uploaded_at: number;
     }>>(ENDPOINTS.ASSET_LIST);
+  }
+
+  // ── 成片结果 ──
+  async getWorkflowResult(taskId: string) {
+    return this.request<{
+      task_id: string;
+      status: string;
+      result: { video_url: string; thumbnail_url: string } | null;
+      error: string | null;
+    }>(ENDPOINTS.WORKFLOW_RESULT(taskId));
   }
 }
 

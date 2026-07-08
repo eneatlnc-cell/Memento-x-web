@@ -1,134 +1,146 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import { InputPanel } from "@/components/task/InputPanel";
-import { WorkflowPreview } from "@/components/task/WorkflowPreview";
-import { ExecutionProgress } from "@/components/task/ExecutionProgress";
-import { TaskHistory } from "@/components/task/TaskHistory";
-import { useTaskStore, type Task, type TaskStep } from "@/lib/store/taskStore";
+import { useState, useEffect, useCallback } from "react";
 import { apiClient } from "@/lib/api/client";
 import { useWebSocket } from "@/lib/websocket/useWebSocket";
+import { useAuthStore } from "@/lib/store/authStore";
+import { AssetSelector } from "@/components/task/AssetSelector";
+import { TargetSelector } from "@/components/task/TargetSelector";
+import { ExecutionProgress } from "@/components/task/ExecutionProgress";
+import { TaskHistory } from "@/components/task/TaskHistory";
+
+interface Asset {
+  asset_id: string;
+  name: string;
+  type: string;
+  duration: number | null;
+  thumbnail_url: string | null;
+}
+
+interface TaskStep { id: string; action: string; status: string; }
 
 export default function TaskCenterPage() {
-  const { tasks, currentTask, addTask, updateTask, setCurrentTask, updateTaskProgress } = useTaskStore();
-  const [isLoading, setIsLoading] = useState(false);
-  const [workflow, setWorkflow] = useState<{
-    version: string;
-    workflow_id: string;
-    steps: Array<{ id: string; action: string; params: Record<string, unknown> }>;
-  } | null>(null);
+  const userId = useAuthStore((s) => s.userId) || "web_user";
 
-  // WebSocket 实时更新
-  useWebSocket({
-    onMessage: (data) => {
-      if (data.type === "task_update" && data.task_id) {
-        updateTaskProgress(
-          data.task_id,
-          data.progress,
-          data.step_name,
-          // Keep existing steps, update the current one
-          currentTask?.steps.map((s) =>
-            s.id === data.step_id ? { ...s, status: "running" as const } : s,
-          ) || [],
-        );
-      }
-    },
-  });
+  // ── 三步流程状态 ──
+  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
+  const [selectedTarget, setSelectedTarget] = useState<"person" | "background" | "object" | null>(null);
+  const [assets, setAssets] = useState<Asset[]>([]);
 
-  const handleSubmit = useCallback(async (input: string) => {
-    setIsLoading(true);
+  // ── 任务执行状态 ──
+  const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
+  const [taskStatus, setTaskStatus] = useState<string>("idle");
+  const [taskSteps, setTaskSteps] = useState<TaskStep[]>([]);
+  const [progress, setProgress] = useState(0);
+  const [resultUrl, setResultUrl] = useState<string | null>(null);
 
-    const taskId = `task_${Date.now().toString(36)}`;
-    const newTask: Task = {
-      id: taskId,
-      userInput: input,
-      status: "understanding",
-      progress: 0,
-      currentStep: "理解意图...",
-      steps: [],
-      resultUrl: null,
-      createdAt: new Date(),
-    };
-    addTask(newTask);
+  // ── 加载素材列表 ──
+  useEffect(() => {
+    apiClient.getAssetList().then(setAssets).catch(() => {});
+  }, []);
 
-    try {
-      // 1. 意图理解
-      const result = await apiClient.understandIntent(input);
-      if (!result.success) throw new Error("意图理解失败");
-
-      setWorkflow(result.workflow);
-      updateTask(taskId, {
-        status: "preview",
-        currentStep: "工作流已生成",
-        steps: result.workflow.steps.map((s) => ({
-          id: s.id,
-          action: s.action,
-          status: "pending" as const,
-        })),
-      });
-
-      // 2. 任务派发
-      updateTask(taskId, { status: "dispatched", currentStep: "派发任务..." });
-      const dispatchResult = await apiClient.dispatchWorkflow(result.workflow);
-      if (!dispatchResult.success) throw new Error("任务派发失败");
-
-      updateTask(taskId, { status: "running", currentStep: "执行中..." });
-
-      // 3. 轮询任务状态
-      const pollInterval = setInterval(async () => {
-        try {
-          const statusResult = await apiClient.getTaskStatus(taskId);
-          updateTaskProgress(taskId, statusResult.progress, statusResult.current_step, statusResult.steps as TaskStep[]);
-
-          if (statusResult.status === "completed") {
-            clearInterval(pollInterval);
-            updateTask(taskId, { status: "completed", resultUrl: statusResult.result_url });
-          } else if (statusResult.status === "failed") {
-            clearInterval(pollInterval);
-            updateTask(taskId, { status: "failed" });
-          }
-        } catch {
-          // 轮询失败不中断
-        }
-      }, 2000);
-
-      // 清理
-      setTimeout(() => clearInterval(pollInterval), 600000); // 10 分钟超时
-    } catch (error) {
-      updateTask(taskId, {
-        status: "failed",
-        currentStep: error instanceof Error ? error.message : "执行失败",
-      });
-    } finally {
-      setIsLoading(false);
+  // ── WebSocket 实时进度 ──
+  const onTaskUpdate = useCallback((data: { task_id: string; status: string; steps: TaskStep[]; progress: number; result_url?: string }) => {
+    if (data.task_id === currentTaskId) {
+      setTaskStatus(data.status);
+      setTaskSteps(data.steps);
+      setProgress(data.progress);
+      if (data.result_url) setResultUrl(data.result_url);
     }
-  }, [addTask, updateTask, updateTaskProgress]);
+  }, [currentTaskId]);
+
+  useWebSocket(userId, onTaskUpdate);
+
+  // ── 执行任务 ──
+  const handleExecute = async () => {
+    if (!selectedAsset || !selectedTarget) return;
+    setStep(3);
+    setTaskStatus("submitting");
+    try {
+      const userInput = `${selectedTarget === "person" ? "替换人物" : selectedTarget === "background" ? "替换背景" : "替换物体"}`;
+      const res = await apiClient.dispatchWorkflow(userInput, [
+        { id: selectedAsset.asset_id, name: selectedAsset.name, type: selectedAsset.type },
+      ]);
+      setCurrentTaskId(res.task_id);
+      setTaskStatus("running");
+    } catch (err) {
+      setTaskStatus("error");
+    }
+  };
+
+  // ── 重置流程 ──
+  const handleReset = () => {
+    setStep(1);
+    setSelectedAsset(null);
+    setSelectedTarget(null);
+    setCurrentTaskId(null);
+    setTaskStatus("idle");
+    setTaskSteps([]);
+    setProgress(0);
+    setResultUrl(null);
+  };
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
-      <InputPanel onSubmit={handleSubmit} isLoading={isLoading} />
+    <div className="max-w-5xl mx-auto space-y-6">
+      {/* ── 进度指示器 ── */}
+      <div className="flex items-center gap-3 mb-8">
+        {[1, 2, 3].map((s) => (
+          <div key={s} className="flex items-center gap-2">
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-colors ${
+              step >= s ? "bg-[#6C5CE7] text-white" : "bg-[#1E1E3A] text-[#888]"
+            }`}>{s}</div>
+            <span className={`text-sm ${step >= s ? "text-white" : "text-[#888]"}`}>
+              {s === 1 ? "选择素材" : s === 2 ? "选择目标" : "执行"}
+            </span>
+            {s < 3 && <div className={`w-8 h-0.5 ${step > s ? "bg-[#6C5CE7]" : "bg-[#1E1E3A]"}`} />}
+          </div>
+        ))}
+      </div>
 
-      <WorkflowPreview workflow={workflow} />
-
-      {currentTask && (
-        <ExecutionProgress
-          progress={currentTask.progress}
-          currentStep={currentTask.currentStep}
-          steps={currentTask.steps}
-          status={currentTask.status}
-          resultUrl={currentTask.resultUrl}
+      {/* ── 步骤 1：选择素材 ── */}
+      {step === 1 && (
+        <AssetSelector
+          assets={assets}
+          selected={selectedAsset}
+          onSelect={(asset) => { setSelectedAsset(asset); setStep(2); }}
         />
       )}
 
-      <TaskHistory
-        tasks={tasks}
-        onSelect={(task) => {
-          setCurrentTask(task);
-          if (task.steps.length > 0) {
-            setWorkflow(null);
-          }
-        }}
-      />
+      {/* ── 步骤 2：选择目标 ── */}
+      {step === 2 && selectedAsset && (
+        <TargetSelector
+          asset={selectedAsset}
+          selected={selectedTarget}
+          onSelect={(target) => setSelectedTarget(target)}
+          onBack={() => setStep(1)}
+          onExecute={handleExecute}
+        />
+      )}
+
+      {/* ── 步骤 3：执行进度 ── */}
+      {step === 3 && (
+        <div className="space-y-6">
+          <ExecutionProgress
+            taskId={currentTaskId}
+            status={taskStatus}
+            steps={taskSteps}
+            progress={progress}
+            resultUrl={resultUrl}
+          />
+          {taskStatus === "completed" || taskStatus === "error" ? (
+            <button onClick={handleReset}
+              className="w-full py-3 border border-[#1E1E3A] text-[#888] hover:text-white hover:border-[#6C5CE7] rounded-lg transition-colors">
+              开始新任务
+            </button>
+          ) : null}
+        </div>
+      )}
+
+      {/* ── 任务历史 ── */}
+      <div className="pt-8 border-t border-[#1E1E3A]">
+        <TaskHistory />
+      </div>
     </div>
   );
 }
