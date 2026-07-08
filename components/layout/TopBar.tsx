@@ -1,13 +1,14 @@
 "use client";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { BellIcon, PlayIcon, StopIcon, CubeIcon } from "@radix-ui/react-icons";
+import { BellIcon, PlayIcon, StopIcon } from "@radix-ui/react-icons";
 import { Button } from "@/components/ui/button";
 import { useLocalStore } from "@/lib/store/localStore";
 import { useEffect } from "react";
 
 export function TopBar() {
   const status = useLocalStore((s) => s.status);
+  const activeTasks = useLocalStore((s) => s.activeTasks);
   const checkHealth = useLocalStore((s) => s.checkHealth);
   const startTool = useLocalStore((s) => s.startTool);
   const stopTool = useLocalStore((s) => s.stopTool);
@@ -25,8 +26,8 @@ export function TopBar() {
     "bg-[#888]";
 
   const statusLabel =
+    status === "running" ? `任务执行中 (${activeTasks})` :
     status === "online" ? "本地工具在线" :
-    status === "running" ? "任务执行中" :
     status === "offline" ? "本地工具离线" : "检测中...";
 
   return (
@@ -36,9 +37,9 @@ export function TopBar() {
       </div>
 
       <div className="flex items-center gap-3">
-        {/* 本地工具状态 + 启动按钮 */}
+        {/* 本地工具状态 + 启动/停止按钮 */}
         <div className="flex items-center gap-2">
-          <span className={`w-2 h-2 rounded-full ${statusColor}`} />
+          <span className={`w-2 h-2 rounded-full ${statusColor} ${status === "running" ? "animate-pulse" : ""}`} />
           <span className="text-xs text-muted-foreground">{statusLabel}</span>
           {status === "offline" || status === "unknown" ? (
             <Button variant="outline" size="sm" onClick={startTool} className="h-7 gap-1 text-xs">
