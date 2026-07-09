@@ -6,16 +6,16 @@ import { useState } from "react";
 export function StatusBar() {
   const [localStatus, setLocalStatus] = useState({ online: true, gpu: "RTX 4090", queue: 0 });
 
-  useWebSocket({
-    onMessage: (data) => {
-      if (data.type === "local_status") {
-        setLocalStatus({
-          online: data.status === "online",
-          gpu: (data as unknown as { gpu: string }).gpu || "RTX 4090",
-          queue: (data as unknown as { queue: number }).queue || 0,
-        });
-      }
-    },
+  // NOTE: useWebSocket 当前仅分发 task_update 类型消息，
+  // local_status 消息需要扩展 hook 后才能接收。
+  useWebSocket("status_bar", (data) => {
+    if ((data as any).type === "local_status") {
+      setLocalStatus({
+        online: (data as any).status === "online",
+        gpu: (data as any).gpu || "RTX 4090",
+        queue: (data as any).queue || 0,
+      });
+    }
   });
 
   return (

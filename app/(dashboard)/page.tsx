@@ -8,6 +8,7 @@ import { AssetSelector } from "@/components/task/AssetSelector";
 import { TargetSelector } from "@/components/task/TargetSelector";
 import { ExecutionProgress } from "@/components/task/ExecutionProgress";
 import { TaskHistory } from "@/components/task/TaskHistory";
+import { useTaskStore, type Task } from "@/lib/store/taskStore";
 
 interface Asset {
   asset_id: string;
@@ -21,6 +22,7 @@ interface TaskStep { id: string; action: string; status: string; }
 
 export default function TaskCenterPage() {
   const userId = useAuthStore((s) => s.userId) || "web_user";
+  const { tasks, addTask } = useTaskStore();
 
   // ── 三步流程状态 ──
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -139,7 +141,17 @@ export default function TaskCenterPage() {
 
       {/* ── 任务历史 ── */}
       <div className="pt-8 border-t border-[#1E1E3A]">
-        <TaskHistory />
+        <TaskHistory
+          tasks={tasks}
+          onSelect={(task) => {
+            setCurrentTaskId(task.id);
+            setTaskStatus(task.status);
+            setTaskSteps(task.steps);
+            setProgress(task.progress);
+            if (task.resultUrl) setResultUrl(task.resultUrl);
+            setStep(3);
+          }}
+        />
       </div>
     </div>
   );
