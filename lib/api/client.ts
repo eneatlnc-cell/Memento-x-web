@@ -86,7 +86,7 @@ class ApiClient {
         body: {
           user_input: userInput,
           assets: assets || [],
-          local_url: localUrl || "http://localhost:8000/api/v1/local/execute",
+          local_url: localUrl || `${process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api/v1"}/local/execute`,
         },
       },
     );

@@ -7,7 +7,7 @@ export const ENDPOINTS = {
   ACCOUNT_LOGIN: `${API_BASE}/account/login`,
   ACCOUNT_REFRESH: `${API_BASE}/account/refresh`,
   // 意图理解
-  INTENT_UNDERSTAND: `${API_BASE}/intent/understand`,
+  INTENT_UNDERSTAND: `${API_BASE}/workflow/generate`,
   // 任务派发
   WORKFLOW_DISPATCH: `${API_BASE}/workflow/dispatch`,
   // 任务状态
